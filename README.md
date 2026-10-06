@@ -1,7 +1,9 @@
 # MT Monitoring Status
 
 Public status page of [portfolio.mtmonitoring.org](https://portfolio.mtmonitoring.org),
-hosted on GitHub Pages so it keeps working when the server is down.
+served at **https://status.mtmonitoring.org** from GitHub Pages, so it keeps
+working when the server is down. DNS (Websupport):
+`CNAME status → mirekk1312.github.io`; the `CNAME` file holds the domain.
 
 - `index.html` – the page (static, no dependencies).
 - `notice.json` – the outage announcement. Set `"active": true`, edit the
@@ -10,5 +12,7 @@ hosted on GitHub Pages so it keeps working when the server is down.
   (red) or `"info"` (orange, e.g. planned maintenance).
 - `scripts/fetch-status.mjs` – reads the UptimeRobot API (read-only key in the
   `UPTIMEROBOT_API_KEY` secret) and writes `status.json`.
-- `.github/workflows/status.yml` – rebuilds the page every 5 minutes and on
-  every push.
+- `.github/workflows/status.yml` – rebuilds the page every 5 minutes (GitHub
+  may delay scheduled runs) and on every push. It adds an empty "keepalive"
+  commit after 50 days without commits, because GitHub turns scheduled
+  workflows off after 60.
