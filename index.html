@@ -1,0 +1,170 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>MT Monitoring Status</title>
+  <meta name="description" content="Service status of portfolio.mtmonitoring.org">
+  <meta name="theme-color" content="#2f6fed">
+  <!-- Status page of portfolio.mtmonitoring.org, hosted on GitHub Pages so it
+       works when the server is down. status.json is written every 5 minutes
+       by .github/workflows/status.yml from the UptimeRobot API; notice.json is
+       the outage announcement edited by hand. -->
+  <style>
+    :root {
+      --bg: #f6f7f9; --panel: #fff; --text: #1c2330; --muted: #667085; --line: #e3e6ec;
+      --accent: #2f6fed; --ok: #1a7f4b; --ok-bar: #3fb37f; --warn: #b35c00; --warn-bg: #fff4e5;
+      --err: #c0322b; --err-bg: #fdecea; --none: #d5d9e0;
+    }
+    @media (prefers-color-scheme: dark) {
+      :root {
+        --bg: #11151c; --panel: #1a2029; --text: #e6e9ef; --muted: #98a2b3; --line: #2c3440;
+        --accent: #5b8cff; --ok: #3ccf8e; --ok-bar: #2fa874; --warn: #f5a524; --warn-bg: #3a2c14;
+        --err: #ff6b62; --err-bg: #3a1d1c; --none: #2c3440;
+      }
+    }
+    * { box-sizing: border-box; }
+    body { margin: 0; background: var(--bg); color: var(--text);
+           font: 15px/1.5 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+    a { color: var(--accent); text-decoration: none; }
+    a:hover { text-decoration: underline; }
+    header { background: var(--panel); border-bottom: 1px solid var(--line); }
+    .wrap { max-width: 760px; margin: 0 auto; padding: 0 16px; }
+    header .wrap { display: flex; align-items: center; justify-content: space-between; gap: 12px; height: 56px; }
+    .brand { font-weight: 700; color: var(--text); }
+    main { padding: 24px 0 48px; }
+    .card { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 20px; margin-bottom: 16px; }
+    .overall { display: flex; align-items: center; gap: 14px; font-size: 20px; font-weight: 600; }
+    .dot { width: 14px; height: 14px; border-radius: 50%; flex: none; background: var(--none); }
+    .dot.up { background: var(--ok); } .dot.down { background: var(--err); }
+    .dot.paused { background: var(--warn); }
+    .notice { border-radius: 12px; padding: 16px 20px; margin-bottom: 16px; }
+    .notice.down { background: var(--err-bg); }
+    .notice.info { background: var(--warn-bg); }
+    .notice h2 { margin: 0 0 6px; font-size: 17px; }
+    .notice.down h2 { color: var(--err); }
+    .notice p { margin: 0 0 6px; white-space: pre-line; }
+    .small { font-size: 13px; color: var(--muted); }
+    h3 { font-size: 15px; margin: 0; }
+    .svc + .svc { border-top: 1px solid var(--line); margin-top: 16px; padding-top: 16px; }
+    .svc-head { display: flex; justify-content: space-between; align-items: center; gap: 12px; margin-bottom: 10px; }
+    .state { font-size: 14px; font-weight: 600; white-space: nowrap; }
+    .state.up { color: var(--ok); } .state.down { color: var(--err); } .state.paused { color: var(--warn); }
+    .bars { display: grid; grid-template-columns: repeat(30, 1fr); gap: 3px; height: 32px; }
+    .bars span { border-radius: 2px; background: var(--none); }
+    .bars span.full { background: var(--ok-bar); }
+    .bars span.part { background: var(--warn); }
+    .bars span.bad { background: var(--err); }
+    .bars-foot { display: flex; justify-content: space-between; margin-top: 6px; }
+    .incidents { list-style: none; margin: 8px 0 0; padding: 0; }
+    .incidents li { padding: 6px 0; border-top: 1px solid var(--line); font-size: 14px; }
+    .incidents li:first-child { border-top: 0; }
+    footer { text-align: center; }
+  </style>
+</head>
+<body>
+  <header>
+    <div class="wrap">
+      <span class="brand">MT Monitoring Status</span>
+      <a href="https://portfolio.mtmonitoring.org">Go to portal →</a>
+    </div>
+  </header>
+  <main class="wrap">
+    <div id="notice"></div>
+    <div class="card"><div class="overall" id="overall"><span class="dot"></span><span>Loading…</span></div>
+      <div class="small" id="checked"></div></div>
+    <div class="card" id="services"></div>
+    <div class="card"><h3>Recent incidents</h3><ul class="incidents" id="incidents"></ul></div>
+    <footer class="small">Monitoring by UptimeRobot · checked every 5 minutes · times in your local time zone</footer>
+  </main>
+  <script>
+    const STATE = { 2: ["up", "Operational"], 8: ["down", "Outage"], 9: ["down", "Outage"],
+                    0: ["paused", "Paused"], 1: ["", "Not checked yet"] };
+    const STALE_MIN = 30; // older status.json = the updater is delayed
+
+    function el(tag, cls, text) {
+      const e = document.createElement(tag);
+      if (cls) e.className = cls;
+      if (text !== undefined) e.textContent = text;
+      return e;
+    }
+    const when = (ts) => new Date(ts * 1000).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" });
+    function duration(sec) {
+      const m = Math.round(sec / 60);
+      if (m < 60) return `${m} min`;
+      const h = Math.floor(m / 60);
+      return h < 48 ? `${h} h ${m % 60} min` : `${Math.round(h / 24)} days`;
+    }
+    async function getJson(name) {
+      const r = await fetch(`${name}?t=${Date.now()}`, { cache: "no-store" });
+      if (!r.ok) throw new Error(`${name}: HTTP ${r.status}`);
+      return r.json();
+    }
+
+    function renderNotice(n) {
+      const box = document.getElementById("notice");
+      box.replaceChildren();
+      if (!n || !n.active) return;
+      const div = el("div", `notice ${n.severity === "info" ? "info" : "down"}`);
+      div.append(el("h2", "", n.title || "Service disruption"));
+      if (n.message) div.append(el("p", "", n.message));
+      if (n.updated) div.append(el("div", "small", `Updated ${n.updated}`));
+      box.append(div);
+    }
+
+    function renderStatus(s) {
+      const overall = document.getElementById("overall");
+      const checked = document.getElementById("checked");
+      const services = document.getElementById("services");
+      const incidents = document.getElementById("incidents");
+      services.replaceChildren(); incidents.replaceChildren();
+      if (!s || !s.monitors) {
+        overall.replaceChildren(el("span", "dot"), el("span", "", "Live status temporarily unavailable"));
+        checked.textContent = "";
+        return;
+      }
+      const down = s.monitors.filter((m) => m.status === 8 || m.status === 9);
+      overall.replaceChildren(el("span", `dot ${down.length ? "down" : "up"}`),
+        el("span", "", down.length === 0 ? "All systems operational"
+          : down.length === s.monitors.length ? "Major outage" : "Partial outage"));
+      const ageMin = (Date.now() / 1000 - s.generated) / 60;
+      checked.textContent = `Last checked ${when(s.generated)}` +
+        (ageMin > STALE_MIN ? " – the status update is delayed, the current state may differ." : "");
+
+      for (const m of s.monitors) {
+        const [cls, label] = STATE[m.status] || ["", "Unknown"];
+        const svc = el("div", "svc");
+        const head = el("div", "svc-head");
+        head.append(el("h3", "", m.name), el("span", `state ${cls}`, label));
+        const bars = el("div", "bars");
+        for (const d of m.days) {
+          const b = el("span", d.uptime === null ? "" : d.uptime >= 99.95 ? "full" : d.uptime >= 95 ? "part" : "bad");
+          b.title = `${new Date(d.date * 1000).toLocaleDateString()}: ${d.uptime === null ? "no data" : d.uptime.toFixed(2) + " %"}`;
+          bars.append(b);
+        }
+        const foot = el("div", "bars-foot small");
+        foot.append(el("span", "", "30 days ago"),
+          el("span", "", m.uptime30 === null ? "" : `${m.uptime30.toFixed(2)} % uptime`), el("span", "", "Today"));
+        svc.append(head, bars, foot);
+        services.append(svc);
+      }
+
+      const list = s.monitors.flatMap((m) => m.incidents.map((i) => ({ ...i, name: m.name })))
+        .sort((a, b) => b.start - a.start).slice(0, 10);
+      if (!list.length) incidents.append(el("li", "small", "No incidents in the last 30 days."));
+      for (const i of list) {
+        incidents.append(el("li", "", `${when(i.start)} – ${i.name} unavailable` +
+          (i.duration ? ` for ${duration(i.duration)}` : " (ongoing)")));
+      }
+    }
+
+    async function refresh() {
+      const [notice, status] = await Promise.allSettled([getJson("notice.json"), getJson("status.json")]);
+      renderNotice(notice.status === "fulfilled" ? notice.value : null);
+      renderStatus(status.status === "fulfilled" ? status.value : null);
+    }
+    refresh();
+    setInterval(refresh, 60000);
+  </script>
+</body>
+</html>

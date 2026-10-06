@@ -1,0 +1,14 @@
+# MT Monitoring Status
+
+Public status page of [portfolio.mtmonitoring.org](https://portfolio.mtmonitoring.org),
+hosted on GitHub Pages so it keeps working when the server is down.
+
+- `index.html` – the page (static, no dependencies).
+- `notice.json` – the outage announcement. Set `"active": true`, edit the
+  text and `"updated"`, commit. The page shows it within a minute or two.
+  Set `"active": false` when the outage is over. `"severity"`: `"outage"`
+  (red) or `"info"` (orange, e.g. planned maintenance).
+- `scripts/fetch-status.mjs` – reads the UptimeRobot API (read-only key in the
+  `UPTIMEROBOT_API_KEY` secret) and writes `status.json`.
+- `.github/workflows/status.yml` – rebuilds the page every 5 minutes and on
+  every push.
