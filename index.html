@@ -128,8 +128,9 @@
         el("span", "", down.length === 0 ? "All systems operational"
           : down.length === s.monitors.length ? "Major outage" : "Partial outage"));
       const ageMin = (Date.now() / 1000 - s.generated) / 60;
-      checked.textContent = `Last checked ${when(s.generated)}` +
-        (ageMin > STALE_MIN ? " – the status update is delayed, the current state may differ." : "");
+      checked.textContent = s.live ? `Live status, refreshed ${when(s.generated)}`
+        : `Last checked ${when(s.generated)}` +
+          (ageMin > STALE_MIN ? " – the status update is delayed, the current state may differ." : "");
 
       for (const m of s.monitors) {
         const [cls, label] = STATE[m.status] || ["", "Unknown"];
@@ -158,10 +159,50 @@
       }
     }
 
+    // Live state from the public UptimeRobot status page (no key, CORS open),
+    // in the same shape as status.json. Undocumented API - status.json from
+    // the GitHub Action stays as the fallback and the source of incidents.
+    const LIVE_URL = "https://stats.uptimerobot.com/api/getMonitorList/Ft8MC8FEW6?page=1";
+    const LIVE_STATE = { success: 2, danger: 9, warning: 8, black: 0 };
+    async function getLive() {
+      const r = await fetch(`${LIVE_URL}&t=${Date.now()}`, { cache: "no-store" });
+      const j = await r.json();
+      if (j.status !== "ok" || !Array.isArray(j.data)) throw new Error("live: bad response");
+      return {
+        generated: Math.floor(Date.now() / 1000), live: true,
+        monitors: j.data.map((m) => ({
+          name: m.name,
+          status: LIVE_STATE[m.statusClass] ?? 1,
+          uptime30: m["30dRatio"] ? Number(m["30dRatio"].ratio) : null,
+          days: (m.dailyRatios || []).slice(-30).map((d) => ({
+            date: Date.parse(`${d.date}T00:00:00Z`) / 1000,
+            uptime: d.color === "grey" ? null : Number(d.ratio),
+          })),
+          // Last finished outage (UTC); the ongoing one shows as the state.
+          lastDown: m.lastDowntime ? { start: Date.parse(`${m.lastDowntime.date.replace(" ", "T")}Z`) / 1000,
+                                       duration: m.lastDowntime.duration } : null,
+          incidents: [],
+        })),
+      };
+    }
+
     async function refresh() {
-      const [notice, status] = await Promise.allSettled([getJson("notice.json"), getJson("status.json")]);
+      const [notice, live, stored] = await Promise.allSettled([getJson("notice.json"), getLive(), getJson("status.json")]);
       renderNotice(notice.status === "fulfilled" ? notice.value : null);
-      renderStatus(status.status === "fulfilled" ? status.value : null);
+      const s = stored.status === "fulfilled" && stored.value.monitors ? stored.value : null;
+      if (live.status === "fulfilled") {
+        for (const m of live.value.monitors) {
+          const old = s && s.monitors.find((o) => o.name === m.name);
+          if (old) m.incidents = old.incidents.slice();
+          // The stored list may predate the last outage (it is not updated live).
+          if (m.lastDown && !m.incidents.some((i) => Math.abs(i.start - m.lastDown.start) < 600)) {
+            m.incidents.unshift(m.lastDown);
+          }
+        }
+        renderStatus(live.value);
+      } else {
+        renderStatus(s);
+      }
     }
     refresh();
     setInterval(refresh, 60000);
